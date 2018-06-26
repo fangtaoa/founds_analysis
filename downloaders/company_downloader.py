@@ -2,9 +2,6 @@ import requests
 import time
 import json
 import os
-import sys
-
-sys.path.append(".")
 
 from base_downloader import BaseDownloader
 
@@ -19,7 +16,6 @@ class CompanyDownloader(BaseDownloader):
   
   def downloader(self, ini):
     """下载所有的基金公司"""
-
     params = {
       "dt": "14",
       "mc": "returnjson",
@@ -31,10 +27,10 @@ class CompanyDownloader(BaseDownloader):
     }
   
     params["ini"] = ini
-    print(f"正在抓取{ini}类")
-    res = requests.get(self.url, params=params, headers=self.headers)
+    self.logger.info(f"正在获取拼音以{ini}开头基金公司")
+    res = requests.get(self.url, params=params, headers=self.get_headers())
     if res.status_code != 200:
-      print(f"请求失败:{res.url}")
+      self.logger.error(f"请求失败:{res.url}")
       return None
     return res.text
       
@@ -53,16 +49,13 @@ class CompanyDownloader(BaseDownloader):
     founds_infos = {}
     for item in datas.values():
       for i in item:
-        # manager
-        #founds_infos[i[0]] = i[1]
-        # company
         founds_infos[i[2]] = i[3]
     return founds_infos
   
   def save_manager_to_json(self, manager_dict):
     """保存manager到json文件"""
     if not manager_dict:
-      print("manager_dict is none")
+      self.logger.error("manager_dict is none")
       return
     if not os.path.exists(self.data_path):
       os.mkdir(self.data_path)
@@ -75,6 +68,7 @@ class CompanyDownloader(BaseDownloader):
     for letter in self.letters:
       datas = self.downloader(letter)
       all_founds_infos.update(self.parse_data(datas))
+      self.logger.info("休息30s, 开始获取下一系列基金公司")
       time.sleep(30)
     self.save_manager_to_json(all_founds_infos)
 

@@ -2,13 +2,9 @@ import requests
 import os
 import json
 import time
-import datetime
-import sys
 from lxml import etree
 import pandas as pd
 import csv
-
-sys.path.append(".")
 
 from base_downloader import BaseDownloader
 
@@ -31,25 +27,27 @@ class FundsDownloader(BaseDownloader):
             "gsid": company_id,
             "fundType": fund_type
         }
-        headers = self.headers.update(
+        headers = self.get_headers()
+        headers.update(
             {
                 "Accept": "text/html, */*; q=0.01",
-                "Referer": "http://fund.eastmoney.com/company/{}.html".format(company_id),
+                "Referer": "http://fund.eastmoney.com/company/{company_id}.html",
                 "X-Requested-With": "XMLHttpRequest"
             }
         )
         res = requests.get(self.company_url, params=params, headers=headers)
         if res.status_code != 200:
-            print(f"请求失败:{res.url}")
+            self.logger.error(f"请求失败:{res.url}")
             return None
         return res.text
     
     def _get_manangers(self, links):
         """获取基金的经理"""
         if not links:
-            print("links is none")
+            self.logger.error("links is none")
             return None
-        headers = self.headers.update(
+        headers = self.get_headers()
+        headers.update(
             {
                 "Accept": "text/html, */*; q=0.01"
             }
@@ -59,11 +57,11 @@ class FundsDownloader(BaseDownloader):
             try:
                 res = requests.get(url, headers=headers)
                 if res.status_code != 200:
-                    print(f"请求失败: {res.url}")
+                    self.logger.error(f"请求失败: {res.url}")
                 selector = etree.HTML(res.text)
                 managers.append(selector.xpath('//div[@class="bs_gl"]//p//label//a/text()')[0])
             except Exception:
-                print(f"获取基金经理失败: {url}")
+                self.logger.error(f"获取基金经理失败: {url}")
                 managers.append("")
         return managers
 
@@ -96,7 +94,7 @@ class FundsDownloader(BaseDownloader):
         fund_types = ["001", "002"]
         company_ids = self.read_company()
         for id in company_ids.keys():
-            print(f'正在获取"{company_ids[id]}"下的基金....')
+            self.logger.info(f'正在获取"{company_ids[id]}"下的基金....')
             for fund_type in fund_types:
                 html_page = self.downloader(id, fund_type)
                 df_dict = self.parse_html(html_page)

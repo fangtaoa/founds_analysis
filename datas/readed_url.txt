@@ -1,1 +1,1 @@
-http://api.fund.eastmoney.com/f10/lsjz/jjjz_206002.html
+http://fundf10.eastmoney.com/jjjz_007685.html
