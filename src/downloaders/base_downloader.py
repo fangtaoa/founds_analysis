@@ -2,7 +2,7 @@ import os
 import logging
 
 cur_path = os.path.abspath(os.path.dirname(__file__))
-log_path = os.path.join(cur_path, "../logs")
+log_path = os.path.join(cur_path, "../../logs")
 if not os.path.exists(log_path):
     os.makedirs(log_path)
 logging.basicConfig(filename=os.path.join(log_path, "funds.log"),
@@ -18,7 +18,7 @@ logger.addHandler(ch)
 
 class BaseDownloader:
     def __init__(self):
-        self.data_path = os.path.join(cur_path, "../datas")
+        self.data_path = os.path.join(cur_path, "../../datas")
         self.logger = logger
     
     def get_headers(self):

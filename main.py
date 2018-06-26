@@ -4,7 +4,8 @@ import argparse
 
 cur_path = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(cur_path)
-sys.path.append(os.path.join(cur_path, "downloaders"))
+sys.path.append(os.path.join(cur_path, "src"))
+sys.path.append(os.path.join(cur_path, "src", "downloaders"))
 
 from base_downloader import logger
 from company_downloader import CompanyDownloader
