@@ -64,8 +64,9 @@ class CompanyDownloader(BaseDownloader):
     if not manager_dict:
       print("manager_dict is none")
       return
-    if not os.path.exists(os.path.dirname(self.company_path)):
-      os.mkdir(os.path.dirname(self.company_path))
+    if not os.path.exists(self.data_path):
+      os.mkdir(self.data_path)
+      
     with open(self.company_path, "w", encoding="utf-8") as f:
       json.dump(manager_dict, f, ensure_ascii=False)
           
@@ -76,7 +77,6 @@ class CompanyDownloader(BaseDownloader):
       all_founds_infos.update(self.parse_data(datas))
       time.sleep(30)
     self.save_manager_to_json(all_founds_infos)
-
 
 
 if __name__ == '__main__':
