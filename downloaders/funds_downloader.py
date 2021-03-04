@@ -80,9 +80,8 @@ class FundsDownloader(BaseDownloader):
                     writer.writerow(["name", "code", "link"])
             except Exception:
                 os.remove(self.funds_path)
-        raw_df = pd.read_csv(self.funds_path, index_col=None)
-        new_df = raw_df.append(pd.DataFrame(df_dict))
-        new_df.to_csv(self.funds_path, encoding="utf-8")
+        new_df = pd.DataFrame(df_dict)
+        new_df.to_csv(self.funds_path, mode="a", encoding="utf-8", header=False, index=None)
 
     def run(self):
         fund_types = ["001", "002"]
@@ -92,6 +91,7 @@ class FundsDownloader(BaseDownloader):
                 html_page = self.downloader(id, fund_type)
                 df_dict = self.parse_html(html_page)
                 self.save_to_csv(df_dict)
+                #print(df_dict)
                 time.sleep(5)
             time.sleep(30)
     
