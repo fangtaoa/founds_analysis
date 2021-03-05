@@ -77,8 +77,27 @@ class JJJZDownloader(BaseDriver):
     if latest_line == ",".join(values[0]):
       print(f"'{code}.csv'文件是最新的， 无需更新...")
       self.continue_flag = False
+      return
     
-
+    # 需要更新
+    if os.path.exists(code_jz_path):
+      new_lines = []
+      try:
+        latest_list = pd.read_csv(code_jz_path, encoding="utf-8").tail(1).values.tolist()
+        print(latest_list)
+      except Exception:
+        # 文件是空的
+        return
+      if latest_list[0] < values[0][-1][0]:
+        return
+      for i, line in enumerate(values[0]):
+        if line[0] > latest_list[0]:
+          # 把比文件中最后一行还新的line添加到文件
+          new_lines.append(values[i])
+      with open(code_jz_path, "w", encoding="utf-8") as f:
+        csv.writer(f).writerows(new_lines)
+        self.continue_flag = False
+    
   def _parse_html(self, html):
     """
     解析html获取其中的值并组成一个list放回
@@ -98,7 +117,7 @@ class JJJZDownloader(BaseDriver):
   def generate_values(self, htmls):
     if not htmls:
       print("htmls is none")
-      sys.exit(-1)
+      return None
     values = []
     for html in htmls:
       values += self._parse_html(html)
@@ -114,8 +133,8 @@ class JJJZDownloader(BaseDriver):
         csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
     
     with open(jz_path, "a", encoding="utf-8", newline="") as f:
-      csv.writer(f).writerows(reversed(datas))
-
+      if datas:
+        csv.writer(f).writerows(reversed(datas))
 
   def run(self):
     for url in self.read_funds_urls():
