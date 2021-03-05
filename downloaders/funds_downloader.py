@@ -20,6 +20,11 @@ class FundsDownloader(BaseDownloader):
         self.company_path = os.path.join(self.data_path, "company.json")
         self.funds_path = os.path.join(self.data_path, "funds.csv")
 
+    def read_company(self):
+        with open(self.company_path, "r", encoding="utf-8") as f:
+            company_ids = json.load(f)
+        return company_ids
+
     def downloader(self, company_id, fund_type):
         params = {
             "gsid": company_id,
@@ -32,7 +37,6 @@ class FundsDownloader(BaseDownloader):
                 "X-Requested-With": "XMLHttpRequest"
             }
         )
-        
         res = requests.get(self.company_url, params=params, headers=headers)
         if res.status_code != 200:
             print(f"请求失败:{res.url}")
@@ -40,33 +44,39 @@ class FundsDownloader(BaseDownloader):
         print(f"成功获取: {res.url}")
         return res.text
     
-    def read_company(self):
-        with open(self.company_path, "r", encoding="utf-8") as f:
-            company_ids = json.load(f)
-        return company_ids
-    
-    def performances(self, selector):
-        perfs = []
-        for perf_ele in selector.xpath('//td[@class="number"]'):
-            if perf_ele.xpath("./i"):
-                perfs.append(perf_ele.xpath("./i/text()")[0])
-            else:
-                perfs.append("-")
-        return perfs
+    def _get_manangers(self, links):
+        """获取基金的经理"""
+        if not links:
+            print("links is none")
+            return None
+        headers = self.headers.update(
+            {
+                "Accept": "text/html, */*; q=0.01"
+            }
+        )
+        managers = []
+        for url in links:
+            try:
+                res = requests.get(url, headers=headers)
+                if res.status_code != 200:
+                    print(f"请求失败: {res.url}")
+                selector = etree.HTML(res.text)
+                managers.append(selector.xpath('//div[@class="bs_gl"]//p//label//a/text()')[0])
+            except Exception:
+                print(f"获取基金经理失败: {url}")
+                managers.append("")
+        return managers
 
     def parse_html(self, html):
         selector = etree.HTML(html)
         df_dict = {}
-        # cols = ["基金名称", "代码", "档案", "日期"]
-        # table_header = [ele for ele in selector.xpath("//thead//th//span/text()") if ele.strip() != ""]
         name = selector.xpath('//td[@class="fund-name-code"]/a[@class="name"]/text()')
         code = selector.xpath('//td[@class="fund-name-code"]/a[@class="code"]/text()')
-        link = [link for link in selector.xpath('//td[@class="links"]/a/@href') if link.startswith("http")]
+        links = [link for link in selector.xpath('//td[@class="links"]/a/@href') if link.startswith("http")]
         df_dict["name"] = name
         df_dict["code"] = code
-        df_dict["link"] = link
-        # df_dict["date"] = self.get_date(selector)
-        # df_dict["perfs"] = self.performances(selector)
+        df_dict["link"] = links
+        df_dict["manager"] = self._get_manangers(links)
         return df_dict
     
     def save_to_csv(self, df_dict):
@@ -77,7 +87,7 @@ class FundsDownloader(BaseDownloader):
             try:
                 with open(self.funds_path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
-                    writer.writerow(["name", "code", "link"])
+                    writer.writerow(["name", "code", "link", "manager"])
             except Exception:
                 os.remove(self.funds_path)
         new_df = pd.DataFrame(df_dict)
@@ -91,7 +101,6 @@ class FundsDownloader(BaseDownloader):
                 html_page = self.downloader(id, fund_type)
                 df_dict = self.parse_html(html_page)
                 self.save_to_csv(df_dict)
-                #print(df_dict)
                 time.sleep(5)
             time.sleep(30)
     
