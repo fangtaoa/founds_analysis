@@ -7,20 +7,25 @@ from selenium.webdriver.chrome.options import Options
 import time
 
 
-class BaseDriver(object):
+class BaseDriver:
   """封装webdriver类"""
   def __init__(self):
     self.driver = webdriver.Chrome(
       r"C:\Users\fangtao\Downloads\chromedriver_win32\chromedriver.exe",
-      chrome_options=self.options)
+      options=self.options)
     self.driver.maximize_window()
     self.driver.implicitly_wait(30)
 
   @property
   def options(self):
-    chrome_options=Options()
-    chrome_options.add_argument('--headless')
-    return chrome_options
+    options=Options()
+    # options.add_argument('--headless')
+    options.add_argument('lang=zh_CN.UTF-8')
+    options.add_argument('user-agent="MQQBrowser/26 Mozilla/5.0 \
+                (Linux; U; Android 2.3.7; zh-cn; MB200 Build/GRJ22; CyanogenMod-7) \
+                AppleWebKit/533.1 (KHTML, like Gecko) Version/4.0 Mobile Safari/533.1"')
+    
+    return options
   
   def find_element(self, *loc):
     """单个元素的定位方法"""
