@@ -134,7 +134,7 @@ class JJJZDownloader(BaseDriver):
       point_arr.insert(0, point_arr[0] - (point_arr[2] - point_arr[1]))
     return point_arr
   
-  def generate_values(self, raw, x_points, y_points):
+  def generate_raw_datas(self, raw, x_points, y_points):
     """通过x和y点来获取每个单元格数据"""
     # 循环y坐标，x坐标分割表格
     datas = [[] for i in range(len(y_points))]
@@ -169,27 +169,27 @@ class JJJZDownloader(BaseDriver):
         ys, xs = np.where(bitwise_and > 0)
         x_points = self.generate_x_y_pointer_arr(xs, "x")
         y_points = self.generate_x_y_pointer_arr(ys, "y")
-        values += self.generate_values(raw_img_data, x_points, y_points)
+        values += self.generate_raw_datas(raw_img_data, x_points, y_points)
     
-    print(values)
+    
+    self._format_date(values)
+    self._format_price(values, True)
+    self._format_price(values, False)
+    # self._daily_change_rate(values)
     return values
-
   
   def _format_date(self, values):
     """把日期中的.变成-"""
-    date_list = []
     for v in values:
       date = v[0]
       if "." in date:
         date = date.replace(".", "-")
-      if len(date) > 2:
-        date = date[:2]
+      if len(date.split("-")[-1]) > 2:
+        date = date[:-1]
       v[0] = date
-    return date_list
-  
+    
   def _format_price(self, values, unit_price=True):
     """格式化净值"""
-    price_list = []
     for v in values:
       if unit_price:
         price = v[1]
@@ -198,14 +198,28 @@ class JJJZDownloader(BaseDriver):
       if "." not in price:
         t = list(price)
         price = "".join(t.insert(-4, "."))
-      price_list.append(price)
-    return price_list
-  
-  def _daily_change_rate(self, prices):
-    pass
+      if unit_price:
+        v[1] = price
+      else:
+        v[-1] = price
 
   
-      
+  def _daily_change_rate(self, values):
+    """计算净值日变化率"""
+    prices = []
+    change_rate_list = []
+    for v in values:
+      prices.append(v[1])
+    prices.reverse()
+    for i in range(len(prices)-2):
+      ret = str((float(prices[i+1]) - float(prices[i]))/ float(prices[i]) * 100)
+      dot_index =ret.index(".")
+      change_rate_list.append(f"{ret[:dot_index+3]}%")
+    change_rate_list.insert(0, 0)
+    change_rate_list.reverse()
+    for i, v in enumerate(values):
+      v.append(change_rate_list[i])
+
   def _check_latest_line(self, code, values):
     code = code.split("_")[-1].split(".")[0]
     code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
@@ -237,11 +251,10 @@ class JJJZDownloader(BaseDriver):
 
   def run(self):
     for url in self.read_funds_urls():
-      # self.screen_shot(url)
+      self.screen_shot(url)
       datas = self.parse_pic_data()
       self.save_to_csv(datas, url)
-      #time.sleep(5)
-      break
+      time.sleep(5)
     
     self.driver.quit()
       
