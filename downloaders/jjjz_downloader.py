@@ -3,13 +3,13 @@ import os
 import csv
 import time
 import pandas as pd
+import numpy as np
 from lxml import etree
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from PIL import Image
 import pytesseract
-import requests
-import base64
+import cv2
 import re
 
 sys.path.append(".")
@@ -50,7 +50,7 @@ class JJJZDownloader(BaseDriver):
     self.driver.delete_all_cookies()
     self.driver.find_element(*input_page_loc).send_keys(cur_page)
     self.driver.find_element(*input_page_but_loc).click()
-    return self.driver.page_source
+    time.sleep(.2)
 
   def _save_img(self, code, index):
     """截屏保存为图片"""
@@ -92,64 +92,119 @@ class JJJZDownloader(BaseDriver):
     except Exception as e:
       print(f"获取基金净值失败:{url}, error: {e}")
       return None
-  
-  # 百度AI开放平台鉴权函数
-  def get_access_token(self):
-      url = 'https://aip.baidubce.com/oauth/2.0/token'
-      data = {
-          'grant_type': 'client_credentials',  # 固定值
-          'client_id': 'TWSeyBCouaxPrXBsZA4zpn01',  # 在开放平台注册后所建应用的API Key
-          'client_secret': 'OUIRAPa5xauqFb0Vn92GW9SFZbF6MT1x'  # 所建应用的Secret Key
-      }
-      res = requests.post(url, data=data)
-      if res.status_code != 200:
-        print("获取百度token失败")
-        sys.exit(-1) 
-      return res.json()['access_token']
-  
-  def get_img_data(self, img):
-    """调用百度AI识别图片数据并返回"""
-    baidu_url = "https://aip.baidubce.com/rest/2.0/ocr/v1/webimage"
-    with open(img, "rb") as f:
-      img_data = base64.b64encode(f.read())
-    
-    params = {
-      "access_token": self.get_access_token()
-    }
-    data = {
-      "image": img_data
-    }
-    headers = {
-      'content-type': 'application/x-www-form-urlencoded'
-    }
-    res = requests.post(baidu_url, data=data, params=params, headers=headers)
-    
-    if res.status_code == 200:
-      return res.json()["words_result"]
 
-  def read_img_data(self, code):
-    """读取img的数据"""
-    code = code.split("_")[-1].split(".")[0]
-    datas = []
-    values = []
+  def _init_pic(self, img_path):
+    """对原始图进行黑白处理"""
+    raw_img_data = cv2.imread(img_path, 1)
+    # 灰度图片
+    gray = cv2.cvtColor(raw_img_data, cv2.COLOR_BGR2GRAY)
+    # 二值化
+    binary = cv2.adaptiveThreshold(~gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 35, -5)
+    rows, cols = binary.shape
+    scale = 40
+    # 自适应获取核值 识别横线
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (cols // scale, 1))
+    eroded = cv2.erode(binary, kernel, iterations=1)
+
+    dilated_col = cv2.dilate(eroded, kernel, iterations=1)
+    # 识别竖线
+    scale = 20
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, rows // scale))
+    eroded = cv2.erode(binary, kernel, iterations=1)
+    dilated_row = cv2.dilate(eroded, kernel, iterations=1)
+    # 标识交点
+    bitwise_and = cv2.bitwise_and(dilated_col, dilated_row)
+    return raw_img_data, bitwise_and
+  
+  def generate_x_y_pointer_arr(self, points, pointer_type="x"):
+    """生成每个单元格在x和y轴的坐标"""
+    point_arr = []
+    sorted_points = np.sort(points)
     i = 0
-    code_img_path = os.path.join(self.imgs_path, code)
-    for img_name in os.listdir(code_img_path):
-      print(f"正在解析{img_name}")
-      datas+=self.get_img_data(os.path.join(code_img_path, img_name))
-      if i == 3:
-        break
-      i+=1
-     
-    date_list = re.findall(r"(\d+)-(\d+)-(\d+)", "".join(datas))
-    print(date_list)
-    # print(datas)
-    # for i, data in enumerate(datas):
-    #   if i % 6 == 0:
-    #     print(data)
+    # 通过排序，获取跳变的x和y的值，说明是交点，否则交点会有好多像素值值相近，我只取相近值的最后一点
+    # 这个10的跳变不是固定的，根据不同的图片会有微调，基本上为单元格表格的高度（y坐标跳变）和长度（x坐标跳变）
+    # print("sort_x_point:", sort_x_point)
+    for i in range(len(sorted_points) - 1):
+        if sorted_points[i + 1] - sorted_points[i] > 10:
+            point_arr.append(sorted_points[i])
+        i = i + 1
+    point_arr.append(sorted_points[i])  # 要将最后一个点加入
+    if pointer_type.lower() == "x".lower():
+      # 时间单元格的坐标也要加入
+      point_arr.insert(0, point_arr[0] - (point_arr[2] - point_arr[1]))
+    return point_arr
+  
+  def generate_values(self, raw, x_points, y_points):
+    """通过x和y点来获取每个单元格数据"""
+    # 循环y坐标，x坐标分割表格
+    datas = [[] for i in range(len(y_points))]
+    for i in range(len(y_points) - 1):
+        for j in range(len(x_points) - 1):
+            # 在分割时，第一个参数为y坐标，第二个参数为x坐标
+            cell = raw[y_points[i]:y_points[i + 1], x_points[j]:x_points[j + 1]]
+            # 读取文字，此为默认英文
+            # pytesseract.pytesseract.tesseract_cmd = 'E:/Tesseract-OCR/tesseract.exe'
+            text = pytesseract.image_to_string(cell, lang="chi_sim")
+            # 去除特殊字符
+            text = re.findall(r'[^\*"/:?\\|<>″′‖ 〈\n]', text, re.S)
+            text = "".join(text).replace("\x0c", "")
+            # print('单元格图片信息：' + text)
+            if text:
+              datas[i].append(text)
+            j = j + 1
+        i = i + 1
+    values = []
+    for data in datas:
+      if data:
+        values.append(data[:3])
+    return values
+
+  def parse_pic_data(self):
+    """遍历imgs目录，解析出每张图片中的数据"""
+    values = []
+    for root_dir, _, img_names in os.walk(self.imgs_path):
+      for img_name in img_names:
+        print(f"正在提取{img_name}图片的数据")
+        raw_img_data, bitwise_and = self._init_pic(os.path.join(root_dir, img_name))
+        ys, xs = np.where(bitwise_and > 0)
+        x_points = self.generate_x_y_pointer_arr(xs, "x")
+        y_points = self.generate_x_y_pointer_arr(ys, "y")
+        values += self.generate_values(raw_img_data, x_points, y_points)
     
-    
-      
+    print(values)
+    return values
+
+  
+  def _format_date(self, values):
+    """把日期中的.变成-"""
+    date_list = []
+    for v in values:
+      date = v[0]
+      if "." in date:
+        date = date.replace(".", "-")
+      if len(date) > 2:
+        date = date[:2]
+      v[0] = date
+    return date_list
+  
+  def _format_price(self, values, unit_price=True):
+    """格式化净值"""
+    price_list = []
+    for v in values:
+      if unit_price:
+        price = v[1]
+      else:
+        price = v[-1]
+      if "." not in price:
+        t = list(price)
+        price = "".join(t.insert(-4, "."))
+      price_list.append(price)
+    return price_list
+  
+  def _daily_change_rate(self, prices):
+    pass
+
+  
       
   def _check_latest_line(self, code, values):
     code = code.split("_")[-1].split(".")[0]
@@ -165,37 +220,6 @@ class JJJZDownloader(BaseDriver):
       self.continue_flag = False
       return
     
-  def _parse_html(self, html):
-    """
-    解析html获取其中的值并组成一个list放回
-    Returns:
-    values: [[]]
-    """
-    datas = []
-    selector = etree.HTML(html)
-    item_list = selector.xpath('//table[@class="w782 comm lsjz"]/tbody/tr')
-    for item in item_list:
-      tmp_values = []
-      for v in item.xpath("./td/text()"):
-        tmp_values.append(v.strip())
-      print("tmp_values:", tmp_values)
-      datas.append(tmp_values)
-    return datas
-
-  def generate_values(self, htmls):
-    if not htmls:
-      print("htmls is none")
-      return None
-    values = []
-    for i, html in enumerate(htmls):
-      print("generate_values:",  i)
-      values += self._parse_html(html)
-    
-    with open(os.path.join(self.data_path, "funds.html"), "w", encoding="utf-8") as f:
-      for html in htmls:
-        f.write(html)
-    return values
-    
   def save_to_csv(self, datas, code):
     code = code.split("_")[-1].split(".")[0]
     jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
@@ -204,7 +228,8 @@ class JJJZDownloader(BaseDriver):
 
     with open(jz_path, "w+", encoding="utf-8", newline="") as f:
       if not f.read():
-        csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
+        # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
+        csv.writer(f).writerow(["日期", "单位净值", "累计净值"])
     
     with open(jz_path, "a", encoding="utf-8", newline="") as f:
       if datas:
@@ -213,9 +238,8 @@ class JJJZDownloader(BaseDriver):
   def run(self):
     for url in self.read_funds_urls():
       # self.screen_shot(url)
-      self.read_img_data(url)
-      #datas = self.generate_values()
-      #self.save_to_csv(datas, url)
+      datas = self.parse_pic_data()
+      self.save_to_csv(datas, url)
       #time.sleep(5)
       break
     
