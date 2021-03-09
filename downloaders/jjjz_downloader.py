@@ -11,6 +11,7 @@ from PIL import Image
 import pytesseract
 import cv2
 import re
+import shutil
 
 sys.path.append(".")
 
@@ -78,6 +79,8 @@ class JJJZDownloader(BaseDriver):
         f"document.documentElement.scrollTop={self.driver.get_window_size()['height']}")
     
   def screen_shot(self, url):
+    if os.path.exists(self.imgs_path):
+      shutil.rmtree(self.imgs_path)
     cur_page = 2
     try:
       self.driver.get(url)
@@ -184,6 +187,8 @@ class JJJZDownloader(BaseDriver):
       date = v[0]
       if "." in date:
         date = date.replace(".", "-")
+      if "--" in date:
+        date = date.replace("-", "")
       if len(date.split("-")[-1]) > 2:
         date = date[:-1]
       v[0] = date
@@ -197,7 +202,8 @@ class JJJZDownloader(BaseDriver):
         price = v[-1]
       if "." not in price:
         t = list(price)
-        price = "".join(t.insert(-4, "."))
+        t.insert(-4, ".")
+        price = "".join(t)
       if unit_price:
         v[1] = price
       else:
