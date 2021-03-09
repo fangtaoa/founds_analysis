@@ -19,6 +19,7 @@ class FundsDownloader(BaseDownloader):
         self.company_url = "http://fund.eastmoney.com/Company/home/KFSFundRank"
         self.company_path = os.path.join(self.data_path, "company.json")
         self.funds_path = os.path.join(self.data_path, "funds.csv")
+        self.is_new_file = True
 
     def read_company(self):
         with open(self.company_path, "r", encoding="utf-8") as f:
@@ -41,7 +42,6 @@ class FundsDownloader(BaseDownloader):
         if res.status_code != 200:
             print(f"请求失败:{res.url}")
             return None
-        print(f"成功获取: {res.url}")
         return res.text
     
     def _get_manangers(self, links):
@@ -83,13 +83,12 @@ class FundsDownloader(BaseDownloader):
         if not df_dict:
             print("df_dict is none")
             return
-        if not os.path.exists(self.funds_path):
-            try:
-                with open(self.funds_path, "w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(["name", "code", "link", "manager"])
-            except Exception:
-                os.remove(self.funds_path)
+
+        if self.is_new_file:
+            with open(self.funds_path, "w+", newline="", encoding="utf-8") as f:
+                csv.writer(f).writerow(["name", "code", "link", "manager"])
+                self.is_new_file = False
+
         new_df = pd.DataFrame(df_dict)
         new_df.to_csv(self.funds_path, mode="a", encoding="utf-8", header=False, index=None)
 
@@ -97,12 +96,13 @@ class FundsDownloader(BaseDownloader):
         fund_types = ["001", "002"]
         company_ids = self.read_company()
         for id in company_ids.keys():
+            print(f'正在获取"{company_ids[id]}"下的基金....')
             for fund_type in fund_types:
                 html_page = self.downloader(id, fund_type)
                 df_dict = self.parse_html(html_page)
                 self.save_to_csv(df_dict)
-                time.sleep(5)
-            time.sleep(30)
+                time.sleep(3)
+            time.sleep(10)
     
 
 if __name__ == "__main__":
