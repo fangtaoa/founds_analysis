@@ -28,6 +28,7 @@ class JJJZDownloader(BaseDriver):
     self.funds_path = os.path.join(self.data_path, "funds.csv")
     self.base_url = "http://fundf10.eastmoney.com"
     self.continue_flag = True
+    self.is_new_file = True
   
   def read_funds_urls(self):
     """读取基金对应的url"""
@@ -195,19 +196,19 @@ class JJJZDownloader(BaseDriver):
     
   def _format_price(self, values, unit_price=True):
     """格式化净值"""
-    for v in values:
-      if unit_price:
-        price = v[1]
-      else:
-        price = v[-1]
-      if "." not in price:
-        t = list(price)
-        t.insert(-4, ".")
-        price = "".join(t)
-      if unit_price:
-        v[1] = price
-      else:
-        v[-1] = price
+    for i, v in enumerate(values):
+        if unit_price:
+            unit_index = 1
+        else:
+            unit_index = -1
+        price = v[unit_index]
+        
+        if len(price.split(".")[-1]) < 4:
+            dot_index = price.index(".")
+            if i == 0:
+                i = 2
+            price = price.replace(".", f".{values[i-1][unit_index][dot_index+1]}")
+            v[unit_index] = price
 
   
   def _daily_change_rate(self, values):
@@ -246,10 +247,12 @@ class JJJZDownloader(BaseDriver):
     if not os.path.exists(self.lsjz_path):
       os.mkdir(self.lsjz_path)
 
-    with open(jz_path, "w+", encoding="utf-8", newline="") as f:
-      if not f.read():
-        # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
-        csv.writer(f).writerow(["日期", "单位净值", "累计净值"])
+    if self.is_new_file:
+      with open(jz_path, "w+", encoding="utf-8", newline="") as f:
+        if not f.read():
+          # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
+          csv.writer(f).writerow(["日期", "单位净值", "累计净值"])
+          self.is_new_file = False
     
     with open(jz_path, "a", encoding="utf-8", newline="") as f:
       if datas:
@@ -257,7 +260,7 @@ class JJJZDownloader(BaseDriver):
 
   def run(self):
     for url in self.read_funds_urls():
-      self.screen_shot(url)
+      # self.screen_shot(url)
       datas = self.parse_pic_data()
       self.save_to_csv(datas, url)
       time.sleep(5)
