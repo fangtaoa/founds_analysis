@@ -12,6 +12,7 @@ import pytesseract
 import cv2
 import re
 import shutil
+from datetime import datetime, date, timedelta
 
 sys.path.append(".")
 
@@ -49,7 +50,6 @@ class JJJZDownloader(BaseDriver):
     """点击下一页并获取内容"""
     input_page_loc = (By.CSS_SELECTOR, "input.pnum")
     input_page_but_loc = (By.CSS_SELECTOR, "input.pgo")
-
     self.driver.delete_all_cookies()
     self.driver.find_element(*input_page_loc).send_keys(cur_page)
     self.driver.find_element(*input_page_but_loc).click()
@@ -111,7 +111,6 @@ class JJJZDownloader(BaseDriver):
     # 自适应获取核值 识别横线
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (cols // scale, 1))
     eroded = cv2.erode(binary, kernel, iterations=1)
-
     dilated_col = cv2.dilate(eroded, kernel, iterations=1)
     # 识别竖线
     scale = 20
@@ -165,7 +164,7 @@ class JJJZDownloader(BaseDriver):
         values.append(data[:3])
     return values
 
-  def parse_pic_data(self):
+  def parse_pic_data(self, latest_rate=0):
     """遍历imgs目录，解析出每张图片中的数据"""
     values = []
     for root_dir, _, img_names in os.walk(self.imgs_path):
@@ -176,14 +175,10 @@ class JJJZDownloader(BaseDriver):
         x_points = self.generate_x_y_pointer_arr(xs, "x")
         y_points = self.generate_x_y_pointer_arr(ys, "y")
         values += self.generate_raw_datas(raw_img_data, x_points, y_points)
-        
     self._format_date(values)
     self._format_price(values, 1)
     self._format_price(values, -1)
-    self._daily_change_rate(values)
-    with open(os.path.join(self.data_path, "tmp.csv"), "w", encoding="utf-8") as f:
-      csv.writer(f).writerows(values)
-    return values
+    self._daily_change_rate(values, latest_rate)
   
   def _format_date(self, values):
     """把日期中的.变成-"""
@@ -199,7 +194,6 @@ class JJJZDownloader(BaseDriver):
         if i == 0:
           i = 1
         date = "{}-{}".format(date[:-2], str(int(values[i-1][-2:])+1))
-
       if len(date.split("-")[-1]) > 2:
         date = date[:-1]
       v[0] = date
@@ -211,15 +205,14 @@ class JJJZDownloader(BaseDriver):
         if "." not in price:
           t_index = price.index(price[-4:])
           price = "{}.{}".format(price[:t_index], price[-4:])
-
         if len(price.split(".")[-1]) < 4:
             dot_index = price.index(".")
             if i == 0:
                 i = 2
             price = price.replace(".", f".{values[i-1][unit_index][dot_index+1]}")
-            v[unit_index] = price
+        v[unit_index] = price
 
-  def _daily_change_rate(self, values):
+  def _daily_change_rate(self, values, latest_rate):
     """计算净值日变化率"""
     for i, v in enumerate(values, 1):
       current_price = float(v[1])
@@ -238,50 +231,56 @@ class JJJZDownloader(BaseDriver):
             else:
                 ret = "{}%".format(str(ret * 100)[:4])
         values[i-1].append(ret)
-    values[len(values)-1].append(0)
-
+      values[-1].append(latest_rate if latest_rate else 0)
 
   def _check_latest_line(self, code):
+    """校验文件的最新程度"""
     code = code.split("_")[-1].split(".")[0]
     code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
     try:
       with open(code_jz_path, "r", encoding="utf-8") as f:
-        latest_date = f.readlines()[-1].split(",")[0] # line: 2021-03-08,1.5514,1.5514
+        latest_line = f.readlines()[-1].split(",") # line: 2021-03-08,1.5514,1.5514
     except Exception:
       # code.csv不存在或是空文件
       self.is_continue = True
-
-    values = self.parse_pic_data()
+      return
+    current_time = datetime.now()
+    current_hour = current_time.hour
+    yesterday = (date.today() + timedelta(days = -1)).strftime("%Y-%m-%d")
+    if current_hour <= 20:
+      if latest_line[0] == yesterday:
+        self.exit("文件是最新的, 无需更新.....")
+    values = self.parse_pic_data(latest_rate=latest_line[-1])
     latest_lines = []
     for v in values: # v:["2021-03-08","1.5514","1.5514"]
-      if v[0] > latest_date:
+      if v[0] > latest_line[0]:
         latest_lines.append(v)
-    print(latest_lines)
+    if not latest_lines:
+      self.is_continue = False
+      self.exit("文件是最新的, 无需更新.....")
     with open(code_jz_path, "a", encoding="utf-8", newline="") as f:
-      if latest_lines:
-        csv.writer(f).writerows(reversed(latest_lines))
-        self.is_continue = False
-    
+      # 若有最新数据， 则把最新数据更新到文件
+      csv.writer(f).writerows(reversed(latest_lines))
+      self.is_continue = False
+    self.exit("最新数据已保存成功.....")
+
   def save_to_csv(self, datas, code):
     code = code.split("_")[-1].split(".")[0]
     jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
     if not os.path.exists(self.lsjz_path):
       os.mkdir(self.lsjz_path)
-
     if self.is_new_file:
       with open(jz_path, "w+", encoding="utf-8", newline="") as f:
-        # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
         csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日变化率"])
         self.is_new_file = False
-    
     with open(jz_path, "a", encoding="utf-8", newline="") as f:
       if datas:
         csv.writer(f).writerows(reversed(datas))
   
-  def exit(self):
+  def exit(self, msg):
     if self.driver:
       self.driver.quit()
-    print("所有数据都已保存成功.....")
+    print(msg)
     sys.exit(0)
 
   def run(self):
@@ -290,9 +289,8 @@ class JJJZDownloader(BaseDriver):
       datas = self.parse_pic_data()
       self.save_to_csv(datas, url)
       time.sleep(5)
-      break
     
-    self.exit()
+    self.exit("所有数据都已保存成功.....")
       
     
 if __name__ == "__main__":
