@@ -29,6 +29,7 @@ class JJJZDownloader(BaseDriver):
     self.base_url = "http://fundf10.eastmoney.com"
     self.continue_flag = True
     self.is_new_file = True
+    self.is_continue = True
   
   def read_funds_urls(self):
     """读取基金对应的url"""
@@ -52,7 +53,7 @@ class JJJZDownloader(BaseDriver):
     self.driver.delete_all_cookies()
     self.driver.find_element(*input_page_loc).send_keys(cur_page)
     self.driver.find_element(*input_page_but_loc).click()
-    time.sleep(.2)
+    time.sleep(1)
 
   def _save_img(self, code, index):
     """截屏保存为图片"""
@@ -87,8 +88,9 @@ class JJJZDownloader(BaseDriver):
       self.driver.get(url)
       self._scoll_to_center()
       self._save_img(url, 1)
+      self._check_latest_line(url)
       total_page_nums = self._last_page_num(self.driver.page_source)
-      while(cur_page <= total_page_nums):
+      while((cur_page <= total_page_nums) and (self.is_continue)):
         self._click_next_page(cur_page)
         self._save_img(url, cur_page)
         cur_page+=1
@@ -174,35 +176,42 @@ class JJJZDownloader(BaseDriver):
         x_points = self.generate_x_y_pointer_arr(xs, "x")
         y_points = self.generate_x_y_pointer_arr(ys, "y")
         values += self.generate_raw_datas(raw_img_data, x_points, y_points)
-    
-    
+        
     self._format_date(values)
-    self._format_price(values, True)
-    self._format_price(values, False)
-    # self._daily_change_rate(values)
+    self._format_price(values, 1)
+    self._format_price(values, -1)
+    self._daily_change_rate(values)
+    with open(os.path.join(self.data_path, "tmp.csv"), "w", encoding="utf-8") as f:
+      csv.writer(f).writerows(values)
     return values
   
   def _format_date(self, values):
     """把日期中的.变成-"""
-    for v in values:
+    for i, v in enumerate(values):
       date = v[0]
       if "." in date:
         date = date.replace(".", "-")
       if "--" in date:
-        date = date.replace("-", "")
+        date = date.replace("--", "-")
+      if "-" not in date:
+        date = "{}-{}-{}".format(date[:4], date[4:6], date[6:])
+      if len(date.split("-")[-1]) < 2:
+        if i == 0:
+          i = 1
+        date = "{}-{}".format(date[:-2], str(int(values[i-1][-2:])+1))
+
       if len(date.split("-")[-1]) > 2:
         date = date[:-1]
       v[0] = date
     
-  def _format_price(self, values, unit_price=True):
+  def _format_price(self, values, unit_index):
     """格式化净值"""
     for i, v in enumerate(values):
-        if unit_price:
-            unit_index = 1
-        else:
-            unit_index = -1
         price = v[unit_index]
-        
+        if "." not in price:
+          t_index = price.index(price[-4:])
+          price = "{}.{}".format(price[:t_index], price[-4:])
+
         if len(price.split(".")[-1]) < 4:
             dot_index = price.index(".")
             if i == 0:
@@ -210,36 +219,48 @@ class JJJZDownloader(BaseDriver):
             price = price.replace(".", f".{values[i-1][unit_index][dot_index+1]}")
             v[unit_index] = price
 
-  
   def _daily_change_rate(self, values):
     """计算净值日变化率"""
-    prices = []
-    change_rate_list = []
-    for v in values:
-      prices.append(v[1])
-    prices.reverse()
-    for i in range(len(prices)-2):
-      ret = str((float(prices[i+1]) - float(prices[i]))/ float(prices[i]) * 100)
-      dot_index =ret.index(".")
-      change_rate_list.append(f"{ret[:dot_index+3]}%")
-    change_rate_list.insert(0, 0)
-    change_rate_list.reverse()
-    for i, v in enumerate(values):
-      v.append(change_rate_list[i])
+    for i, v in enumerate(values, 1):
+      current_price = float(v[1])
+      if i == len(values):
+        i = len(values) -1
+      previous_price = float(values[i][1])
+      if v == values[-1]:
+        break
+      else:
+        ret = (current_price - previous_price) / previous_price
+        if ret == float(0):
+          ret = 0
+        else:
+            if str(ret).startswith("-"):
+                ret = "{}%".format(str(ret * 100)[:5])
+            else:
+                ret = "{}%".format(str(ret * 100)[:4])
+        values[i-1].append(ret)
+    values[len(values)-1].append(0)
 
-  def _check_latest_line(self, code, values):
+
+  def _check_latest_line(self, code):
     code = code.split("_")[-1].split(".")[0]
     code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
     try:
       with open(code_jz_path, "r", encoding="utf-8") as f:
-        latest_line = f.readlines()[-1].strip()
+        latest_date = f.readlines()[-1].split(",")[0] # line: 2021-03-08,1.5514,1.5514
     except Exception:
       # code.csv不存在或是空文件
-      return
-    if latest_line == ",".join(values[0]):
-      print(f"'{code}.csv'文件是最新的， 无需更新...")
-      self.continue_flag = False
-      return
+      self.is_continue = True
+
+    values = self.parse_pic_data()
+    latest_lines = []
+    for v in values: # v:["2021-03-08","1.5514","1.5514"]
+      if v[0] > latest_date:
+        latest_lines.append(v)
+    print(latest_lines)
+    with open(code_jz_path, "a", encoding="utf-8", newline="") as f:
+      if latest_lines:
+        csv.writer(f).writerows(reversed(latest_lines))
+        self.is_continue = False
     
   def save_to_csv(self, datas, code):
     code = code.split("_")[-1].split(".")[0]
@@ -249,23 +270,29 @@ class JJJZDownloader(BaseDriver):
 
     if self.is_new_file:
       with open(jz_path, "w+", encoding="utf-8", newline="") as f:
-        if not f.read():
-          # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
-          csv.writer(f).writerow(["日期", "单位净值", "累计净值"])
-          self.is_new_file = False
+        # csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日增长率", "申购状态", "赎回状态"])
+        csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日变化率"])
+        self.is_new_file = False
     
     with open(jz_path, "a", encoding="utf-8", newline="") as f:
       if datas:
         csv.writer(f).writerows(reversed(datas))
+  
+  def exit(self):
+    if self.driver:
+      self.driver.quit()
+    print("所有数据都已保存成功.....")
+    sys.exit(0)
 
   def run(self):
     for url in self.read_funds_urls():
-      # self.screen_shot(url)
+      self.screen_shot(url)
       datas = self.parse_pic_data()
       self.save_to_csv(datas, url)
       time.sleep(5)
+      break
     
-    self.driver.quit()
+    self.exit()
       
     
 if __name__ == "__main__":
