@@ -31,6 +31,7 @@ class JJJZDownloader(BaseDriver):
     self.continue_flag = True
     self.is_new_file = True
     self.is_continue = True
+    self.is_scrolled = False
   
   def read_funds_urls(self):
     """读取基金对应的url"""
@@ -53,7 +54,7 @@ class JJJZDownloader(BaseDriver):
     self.driver.delete_all_cookies()
     self.driver.find_element(*input_page_loc).send_keys(cur_page)
     self.driver.find_element(*input_page_but_loc).click()
-    time.sleep(1)
+    
 
   def _save_img(self, code, index):
     """截屏保存为图片"""
@@ -62,6 +63,7 @@ class JJJZDownloader(BaseDriver):
     if not os.path.exists(code_img_path):
       os.makedirs(code_img_path)
     img_name  = os.path.join(code_img_path, f"{str(index).rjust(8,'0')}.png")
+    time.sleep(1)
     self.driver.save_screenshot(img_name)
     self._crop_img(img_name).save(f"{img_name}")
     
@@ -77,12 +79,14 @@ class JJJZDownloader(BaseDriver):
   
   def _scoll_to_center(self):
     """滑动网页到屏幕居中的位置"""
-    self.driver.execute_script(
+    if not self.is_scrolled:
+      self.driver.execute_script(
         f"document.documentElement.scrollTop={self.driver.get_window_size()['height']}")
     
   def screen_shot(self, url):
     if os.path.exists(self.imgs_path):
-      shutil.rmtree(self.imgs_path)
+      # shutil.rmtree(self.imgs_path)
+      self._remove_imgs()
     cur_page = 2
     try:
       self.driver.get(url)
@@ -166,6 +170,8 @@ class JJJZDownloader(BaseDriver):
 
   def parse_pic_data(self, latest_rate=0):
     """遍历imgs目录，解析出每张图片中的数据"""
+    if not os.path.exists(self.imgs_path):
+      return None
     values = []
     for root_dir, _, img_names in os.walk(self.imgs_path):
       for img_name in img_names:
@@ -175,10 +181,15 @@ class JJJZDownloader(BaseDriver):
         x_points = self.generate_x_y_pointer_arr(xs, "x")
         y_points = self.generate_x_y_pointer_arr(ys, "y")
         values += self.generate_raw_datas(raw_img_data, x_points, y_points)
+    
+    with open(os.path.join(self.lsjz_path, "tmp.csv"), "w", encoding="utf-8", newline="") as f:
+      csv.writer(f).writerows(values)
     self._format_date(values)
     self._format_price(values, 1)
     self._format_price(values, -1)
     self._daily_change_rate(values, latest_rate)
+    
+    return values
   
   def _format_date(self, values):
     """把日期中的.变成-"""
@@ -239,17 +250,22 @@ class JJJZDownloader(BaseDriver):
     code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
     try:
       with open(code_jz_path, "r", encoding="utf-8") as f:
-        latest_line = f.readlines()[-1].split(",") # line: 2021-03-08,1.5514,1.5514
+        lines = f.readlines() # line: 2021-03-08,1.5514,1.5514
     except Exception:
       # code.csv不存在或是空文件
       self.is_continue = True
       return
+    if len(lines) == 1:
+      self.is_continue = True
+      return
+    latest_line = lines[-1].split(",")[0]
     current_time = datetime.now()
     current_hour = current_time.hour
     yesterday = (date.today() + timedelta(days = -1)).strftime("%Y-%m-%d")
     if current_hour <= 20:
       if latest_line[0] == yesterday:
-        self.exit("文件是最新的, 无需更新.....")
+        self._remove_imgs()
+        return
     values = self.parse_pic_data(latest_rate=latest_line[-1])
     latest_lines = []
     for v in values: # v:["2021-03-08","1.5514","1.5514"]
@@ -257,14 +273,19 @@ class JJJZDownloader(BaseDriver):
         latest_lines.append(v)
     if not latest_lines:
       self.is_continue = False
-      self.exit("文件是最新的, 无需更新.....")
+      self._remove_imgs()
+      return
     with open(code_jz_path, "a", encoding="utf-8", newline="") as f:
       # 若有最新数据， 则把最新数据更新到文件
       csv.writer(f).writerows(reversed(latest_lines))
       self.is_continue = False
-    self.exit("最新数据已保存成功.....")
-
+      self._remove_imgs()
+      return
+    print("最新数据已保存成功.....")
+    
   def save_to_csv(self, datas, code):
+    if not datas:
+      return
     code = code.split("_")[-1].split(".")[0]
     jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
     if not os.path.exists(self.lsjz_path):
@@ -277,6 +298,8 @@ class JJJZDownloader(BaseDriver):
       if datas:
         csv.writer(f).writerows(reversed(datas))
   
+  def _remove_imgs(self):
+    shutil.rmtree(self.imgs_path)
   def exit(self, msg):
     if self.driver:
       self.driver.quit()
@@ -288,6 +311,7 @@ class JJJZDownloader(BaseDriver):
       self.screen_shot(url)
       datas = self.parse_pic_data()
       self.save_to_csv(datas, url)
+      self.is_scrolled = True
       time.sleep(5)
     
     self.exit("所有数据都已保存成功.....")
