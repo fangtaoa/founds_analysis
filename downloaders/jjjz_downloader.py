@@ -13,6 +13,7 @@ import cv2
 import re
 import shutil
 from datetime import datetime, date, timedelta
+import asyncio
 
 sys.path.append(".")
 
@@ -22,7 +23,7 @@ from base_page import BaseDriver
 class JJJZDownloader(BaseDriver):
   """下载基金历史净值数据"""
   def __init__(self):
-    super().__init__()
+    self.driver = None
     self.data_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../datas")
     self.imgs_path = os.path.join(self.data_path, "imgs")
     self.lsjz_path = os.path.join(self.data_path, "lsjz")
@@ -31,7 +32,7 @@ class JJJZDownloader(BaseDriver):
     self.continue_flag = True
     self.is_new_file = True
     self.is_continue = True
-    self.is_scrolled = False
+    self.code = None
   
   def read_funds_urls(self):
     """读取基金对应的url"""
@@ -53,13 +54,12 @@ class JJJZDownloader(BaseDriver):
     input_page_but_loc = (By.CSS_SELECTOR, "input.pgo")
     self.driver.delete_all_cookies()
     self.driver.find_element(*input_page_loc).send_keys(cur_page)
+    time.sleep(0.2)
     self.driver.find_element(*input_page_but_loc).click()
-    
 
-  def _save_img(self, code, index):
+  def _save_img(self, index):
     """截屏保存为图片"""
-    code = code.split("_")[-1].split(".")[0]
-    code_img_path = os.path.join(self.imgs_path, code)
+    code_img_path = os.path.join(self.imgs_path, self.code)
     if not os.path.exists(code_img_path):
       os.makedirs(code_img_path)
     img_name  = os.path.join(code_img_path, f"{str(index).rjust(8,'0')}.png")
@@ -79,29 +79,28 @@ class JJJZDownloader(BaseDriver):
   
   def _scoll_to_center(self):
     """滑动网页到屏幕居中的位置"""
-    if not self.is_scrolled:
-      self.driver.execute_script(
+    self.driver.execute_script(
         f"document.documentElement.scrollTop={self.driver.get_window_size()['height']}")
-    
+
   def screen_shot(self, url):
-    if os.path.exists(self.imgs_path):
-      # shutil.rmtree(self.imgs_path)
-      self._remove_imgs()
+    self.driver = BaseDriver.init_driver()
+    self._remove_imgs()
     cur_page = 2
     try:
       self.driver.get(url)
       self._scoll_to_center()
-      self._save_img(url, 1)
-      self._check_latest_line(url)
+      self._save_img(1)
+      self._check_latest_line()
       total_page_nums = self._last_page_num(self.driver.page_source)
       while((cur_page <= total_page_nums) and (self.is_continue)):
         self._click_next_page(cur_page)
-        self._save_img(url, cur_page)
+        self._save_img(cur_page)
         cur_page+=1
         time.sleep(1)
     except Exception as e:
       print(f"获取基金净值失败:{url}, error: {e}")
-      return None
+    finally:
+      self.driver.quit()
 
   def _init_pic(self, img_path):
     """对原始图进行黑白处理"""
@@ -125,10 +124,14 @@ class JJJZDownloader(BaseDriver):
     bitwise_and = cv2.bitwise_and(dilated_col, dilated_row)
     return raw_img_data, bitwise_and
   
-  def generate_x_y_pointer_arr(self, points, pointer_type="x"):
+  def generate_x_y_pointer_arr(self, bitwise_and, pointer_type="x"):
     """生成每个单元格在x和y轴的坐标"""
-    point_arr = []
+    if pointer_type == "x":
+      points = np.where(bitwise_and > 0)[-1]
+    else:
+      points = np.where(bitwise_and > 0)[0]
     sorted_points = np.sort(points)
+    point_arr = []
     i = 0
     # 通过排序，获取跳变的x和y的值，说明是交点，否则交点会有好多像素值值相近，我只取相近值的最后一点
     # 这个10的跳变不是固定的，根据不同的图片会有微调，基本上为单元格表格的高度（y坐标跳变）和长度（x坐标跳变）
@@ -143,8 +146,11 @@ class JJJZDownloader(BaseDriver):
       point_arr.insert(0, point_arr[0] - (point_arr[2] - point_arr[1]))
     return point_arr
   
-  def generate_raw_datas(self, raw, x_points, y_points):
+  def generate_img_datas(self, img_name):
     """通过x和y点来获取每个单元格数据"""
+    raw, bitwise_and = self._init_pic(img_name)
+    x_points = self.generate_x_y_pointer_arr(bitwise_and, "x")
+    y_points = self.generate_x_y_pointer_arr(bitwise_and, "y")
     # 循环y坐标，x坐标分割表格
     datas = [[] for i in range(len(y_points))]
     for i in range(len(y_points) - 1):
@@ -167,21 +173,19 @@ class JJJZDownloader(BaseDriver):
       if data:
         values.append(data[:3])
     return values
-
+  
   def parse_pic_data(self, latest_rate=0):
     """遍历imgs目录，解析出每张图片中的数据"""
-    if not os.path.exists(self.imgs_path):
+    code_img_path = os.path.join(self.imgs_path, self.code)
+    if not os.path.exists(code_img_path):
       return None
     values = []
-    for root_dir, _, img_names in os.walk(self.imgs_path):
-      for img_name in img_names:
+    for root_dir, _, img_names in os.walk(code_img_path):
+      for i, img_name in enumerate(img_names):
         print(f"正在提取{img_name}图片的数据")
-        raw_img_data, bitwise_and = self._init_pic(os.path.join(root_dir, img_name))
-        ys, xs = np.where(bitwise_and > 0)
-        x_points = self.generate_x_y_pointer_arr(xs, "x")
-        y_points = self.generate_x_y_pointer_arr(ys, "y")
-        values += self.generate_raw_datas(raw_img_data, x_points, y_points)
-    
+        # 把提取数据函数加入到任务列表
+        values += self.generate_img_datas(os.path.join(root_dir, img_name))
+
     with open(os.path.join(self.lsjz_path, "tmp.csv"), "w", encoding="utf-8", newline="") as f:
       csv.writer(f).writerows(values)
     self._format_date(values)
@@ -244,10 +248,9 @@ class JJJZDownloader(BaseDriver):
         values[i-1].append(ret)
       values[-1].append(latest_rate if latest_rate else 0)
 
-  def _check_latest_line(self, code):
+  def _check_latest_line(self):
     """校验文件的最新程度"""
-    code = code.split("_")[-1].split(".")[0]
-    code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
+    code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(self.code))
     try:
       with open(code_jz_path, "r", encoding="utf-8") as f:
         lines = f.readlines() # line: 2021-03-08,1.5514,1.5514
@@ -255,68 +258,58 @@ class JJJZDownloader(BaseDriver):
       # code.csv不存在或是空文件
       self.is_continue = True
       return
-    if len(lines) == 1:
+    if len(lines) <= 1:
+      # 文件只有表头[日期,单位净值,累计净值,日变化率]
       self.is_continue = True
       return
+    # 1.通过日期来判断是否是最新的
     latest_line = lines[-1].split(",")[0]
     current_time = datetime.now()
     current_hour = current_time.hour
     yesterday = (date.today() + timedelta(days = -1)).strftime("%Y-%m-%d")
     if current_hour <= 20:
       if latest_line[0] == yesterday:
-        self._remove_imgs()
         return
+    # 2.有数据需要更新
     values = self.parse_pic_data(latest_rate=latest_line[-1])
-    latest_lines = []
-    for v in values: # v:["2021-03-08","1.5514","1.5514"]
-      if v[0] > latest_line[0]:
-        latest_lines.append(v)
+    # 把提取的数据中日期>文件中最新日期的数据添加到新列表
+    latest_lines = [v for v in values if v[0] > latest_line[0]] #v:["2021-03-08","1.5514","1.5514"]
     if not latest_lines:
+      # 没有新数据, 说明数据是最新的
       self.is_continue = False
-      self._remove_imgs()
       return
-    with open(code_jz_path, "a", encoding="utf-8", newline="") as f:
-      # 若有最新数据， 则把最新数据更新到文件
-      csv.writer(f).writerows(reversed(latest_lines))
-      self.is_continue = False
-      self._remove_imgs()
-      return
-    print("最新数据已保存成功.....")
+    self.save_to_csv(latest_lines)
     
-  def save_to_csv(self, datas, code):
+  def save_to_csv(self, datas):
     if not datas:
       return
-    code = code.split("_")[-1].split(".")[0]
-    jz_path = os.path.join(self.lsjz_path, "{}.csv".format(code))
+    code_jz_path = os.path.join(self.lsjz_path, "{}.csv".format(self.code))
     if not os.path.exists(self.lsjz_path):
       os.mkdir(self.lsjz_path)
     if self.is_new_file:
-      with open(jz_path, "w+", encoding="utf-8", newline="") as f:
+      with open(code_jz_path, "w+", encoding="utf-8", newline="") as f:
         csv.writer(f).writerow(["日期", "单位净值", "累计净值", "日变化率"])
         self.is_new_file = False
-    with open(jz_path, "a", encoding="utf-8", newline="") as f:
-      if datas:
-        csv.writer(f).writerows(reversed(datas))
-  
+    with open(code_jz_path, "a", encoding="utf-8", newline="") as f:
+      csv.writer(f).writerows(reversed(datas))
+    print("最新数据已保存成功.....")
+
   def _remove_imgs(self):
-    shutil.rmtree(self.imgs_path)
-  def exit(self, msg):
-    if self.driver:
-      self.driver.quit()
-    print(msg)
-    sys.exit(0)
+    if not os.path.exists(self.imgs_path):
+      return
+    for root_dir, _, img_names in os.walk(os.path.join(self.imgs_path, self.code)):
+      for img_name in img_names:
+        os.remove(os.path.join(root_dir, img_name))
 
   def run(self):
     for url in self.read_funds_urls():
+      self.code = url.split("_")[-1].split(".")[0]
       self.screen_shot(url)
       datas = self.parse_pic_data()
-      self.save_to_csv(datas, url)
-      self.is_scrolled = True
+      self.save_to_csv(datas)
       time.sleep(5)
-    
-    self.exit("所有数据都已保存成功.....")
       
-    
+
 if __name__ == "__main__":
   downloader = JJJZDownloader()
   downloader.run()
