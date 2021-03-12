@@ -10,11 +10,14 @@ import time
 class BaseDriver:
   """封装webdriver类"""
   def __init__(self):
-    self.driver = webdriver.Chrome(
-      r"C:\Users\fangtao\Downloads\chromedriver_win32\chromedriver.exe",
-      options=self.options)
-    self.driver.maximize_window()
-    self.driver.implicitly_wait(30)
+    self.driver = BaseDriver.init_driver()
+  @staticmethod
+  def init_driver():
+    driver_path = r"C:\Users\yuaix\Downloads\chromedriver.exe"
+    driver = webdriver.Chrome(driver_path)
+    driver.maximize_window()
+    driver.implicitly_wait(30)
+    return driver
 
   @property
   def options(self):
