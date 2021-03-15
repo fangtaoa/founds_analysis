@@ -4,8 +4,7 @@ class BaseDownloader:
     def __init__(self):
         self.data_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../datas")
     
-    @property
-    def headers(self):
+    def get_headers(self):
         return {
             "Accept": "*/*",
             "Accept-Encoding": "gzip, deflate",
