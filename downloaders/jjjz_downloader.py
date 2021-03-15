@@ -32,10 +32,11 @@ class JJJZDownloader(BaseDownloader):
       urls.append(f"{self.base_url}/jjjz_{url.split('/')[-1]}")
     try:
       with open(self.readed_url_path, "r", encoding="utf-8") as f:
-        last_url = f.readlines()[-1]
+        last_index = urls.index(f.readlines()[-1])
     except Exception:
       return urls
-    return urls[urls.index(last_url)+1:]
+    else:
+      return urls[last_index+1:]
 
   def _fetch_per_page_data(self, cb_string, page_index):
     """下载每一页数据"""
