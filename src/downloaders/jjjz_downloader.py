@@ -84,7 +84,7 @@ class JJJZDownloader(BaseDownloader):
         page_index += 1      
         if len(datas) == self.total_counts:
           break
-        time.sleep(2)
+        time.sleep(1)
         continue
       else:
         if isinstance(latest_datas, list):
@@ -165,12 +165,6 @@ class JJJZDownloader(BaseDownloader):
       if datas:
         self.save_to_csv(datas)
         self.save_last_url(fund_url)
-      if i % 20 == 0:
-        seconds = 30
-      else:
-        seconds = 10
-      self.logger.info(f"休息{seconds}s, 然后继续......")
-      time.sleep(seconds)
       
 if __name__ == "__main__":
   downloader = JJJZDownloader()
